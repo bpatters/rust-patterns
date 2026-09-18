@@ -112,7 +112,7 @@ let query = sql!(SELECT * FROM users WHERE id = ?);
 | `Serialize`, `Deserialize` | serde | JSON/YAML/etc. encoding |
 | `Error` | thiserror | `std::error::Error` + `Display` |
 | `Parser` | clap | CLI argument parsing |
-| `Builder` | `bon` (or `derive_builder`) | Builder pattern |
+| `Builder` | `bon` (or `typed-builder` / `derive_builder`) | Builder pattern |
 
 **Practical advice**: Use derive macros liberally — they eliminate error-prone boilerplate. Use existing crates (`serde`, `thiserror`, `clap`) before building custom ones.
 
@@ -187,7 +187,7 @@ Derive macros live in a separate crate:
 proc-macro = true
 
 [dependencies]
-syn = { version = "2", features = ["full"] }
+syn = { version = "3", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 ```

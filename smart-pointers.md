@@ -77,7 +77,7 @@ impl Cache {
 
 | | `Cell<T>` | `RefCell<T>` |
 |---|---|---|
-| Works with | Any `T`. `get()` needs `Copy`; `set`/`replace`/`swap`/`take` (`T: Default`) work for non-Copy | Any type |
+| Works with | Any `T`. `get()` needs `Copy`; `set`/`replace`/`swap` for any `T`; `take` needs `T: Default` | Any type |
 | Panics | Never | On double-mutable-borrow |
 | Thread-safe | ❌ | ❌ |
 
@@ -118,7 +118,7 @@ Also useful for function parameters that MIGHT need ownership.
 | `Box<T>` | 1 | ✅ if T: Send | via `&mut` | Heap, trait objects, recursive types |
 | `Rc<T>` | N | ❌ | None (wrap in Cell/RefCell) | Shared ownership, single thread |
 | `Arc<T>` | N | ✅ | None (wrap in Mutex/RwLock) | Shared across threads |
-| `Cell<T>` | — | ❌ | `.get()`/`.set()` | Interior mutability, Copy types |
+| `Cell<T>` | — | ❌ | `.get()`/`.set()` (Copy); `.replace`/`.take` otherwise | Interior mutability; `get()` needs `Copy` |
 | `RefCell<T>` | — | ❌ | `.borrow()`/`.borrow_mut()` | Interior mutability, single thread |
 | `Cow<'_, T>` | 0 or 1 | ✅ if T: Send | clone-on-write | Avoid alloc when data usually unchanged |
 | `Pin<Box<T>>` | 1 | depends | self-ref types, Futures | Prevents moving |
@@ -164,7 +164,7 @@ impl SelfRef {
 
 **Why async**: every `async fn` desugars to a `Future` that may hold references across `.await` points — making it self-referential. The runtime pins before polling.
 
-**Crate alternatives**: `ouroboros`, `self_cell` — generate safe wrappers with correct pinning and drop semantics.
+**Crate alternatives**: prefer `self_cell`. Avoid `ouroboros` (open soundness issues; last release 2025-01).
 
 ### pin-project — Safe Pin Projections
 
@@ -192,7 +192,7 @@ impl<F: Future> Future for TimedFuture<F> {
 }
 ```
 
-Use `pin-project` whenever wrapping a `Future` or `Stream` — eliminates error-prone manual `unsafe` projections.
+Use `pin-project` (attribute, as above) or, in libraries, `pin-project-lite` (`pin_project! { ... }`, no syn) when wrapping a `Future` or `Stream`.
 
 ## Drop Ordering and ManuallyDrop
 
@@ -250,7 +250,7 @@ union IntOrString {
 - **Deep nested `Box`/`Rc` when `Vec<T>` works.** Lists of known length → `Vec`.
 - **`Cell::get()` on a non-Copy type.** `get()` needs `Copy`. For non-Copy, `replace`/`take` (often `Cell<Option<T>>`). Use `RefCell` when you need `&`/`&mut` to the interior.
 - **`RefCell` across threads.** `RefCell` is `!Sync`. Use `Mutex` or `RwLock`.
-- **Reaching for `unsafe` and `Pin` when a simpler design works.** Self-referential types are hard. Consider `ouroboros`/`self_cell` or restructure.
+- **Reaching for `unsafe` and `Pin` when a simpler design works.** Self-referential types are hard. Prefer `self_cell` or restructure.
 - **Holding a `std::sync::MutexGuard` across `.await`.** Compile error on `tokio::spawn`. Nested `{ ... }` block, not `drop(guard)`. `std::sync::Mutex` is correct when the lock is not held across `.await`.
 - **Assuming `JoinHandle` drop joins the thread.** It detaches. Join or abort explicitly in `Drop`.
 - **`mem::forget` for "I don't want to drop this".** Use `ManuallyDrop` if you need later access, otherwise document the leak.

@@ -73,12 +73,19 @@ Do not use `PhantomData<*mut &'a ()>` for branding unless you *want* `!Send + !S
 Prevent mixing incompatible units at compile time, zero runtime cost:
 
 ```rust
+use std::marker::PhantomData;
+use std::ops::{Add, Div};
+
 struct Meters; struct Seconds; struct MetersPerSecond;
 
 #[derive(Debug, Clone, Copy)]
 struct Quantity<Unit> {
     value: f64,
     _unit: PhantomData<Unit>,
+}
+
+impl<U> Quantity<U> {
+    fn new(value: f64) -> Self { Self { value, _unit: PhantomData } }
 }
 
 impl<U> Add for Quantity<U> {

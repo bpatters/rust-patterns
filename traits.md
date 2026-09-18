@@ -48,14 +48,18 @@ trait Error: fmt::Display + fmt::Debug {
 
 Build hierarchies like `Entity: Identifiable + Timestamped` to compose required capabilities.
 
-**Trait upcasting (1.86+)**: `&dyn Sub` coerces to `&dyn Super` when `trait Sub: Super`. Same for `&mut`, `Box`, `Rc`, `Arc`. The old `as_any` / `Deref`-to-supertrait hacks are unnecessary.
+**Trait upcasting (1.86+)**: `&dyn Sub` coerces to `&dyn Super` when `trait Sub: Super`. Same for `&mut`, `Box`, `Rc`, `Arc`. The old `as_any` / `Deref`-to-supertrait hacks are unnecessary. Inherent methods on `dyn Super` (e.g. `Any::downcast_ref`) are **not** in the sub object's method set — upcast first:
 
 ```rust
 trait Store: std::any::Any {
     fn name(&self) -> &str;
 }
+struct Postgres;
+impl Store for Postgres {
+    fn name(&self) -> &str { "pg" }
+}
 fn downcast(s: &dyn Store) -> Option<&Postgres> {
-    s.downcast_ref() // Any methods are available on dyn Store
+    (s as &dyn std::any::Any).downcast_ref()
 }
 ```
 

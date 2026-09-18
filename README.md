@@ -22,7 +22,7 @@ Start with [SKILL.md](./SKILL.md) for orientation, decision trees, and the anti-
 ## Part III: Systems & Production
 
 - [**error-handling.md**](./error-handling.md) — thiserror vs anyhow, `?`, panic, `catch_unwind`
-- [**serialization.md**](./serialization.md) — serde fundamentals, postcard (not bincode), repr(C), zerocopy, bytes::Bytes
+- [**serialization.md**](./serialization.md) — serde fundamentals, postcard (not bincode), serde-saphyr, repr(C), zerocopy, bytes::Bytes
 - [**unsafe.md**](./unsafe.md) — 5 superpowers, sound abstractions, FFI, arenas
 - [**macros.md**](./macros.md) — `macro_rules!`, proc macros, syn/quote
 - [**testing.md**](./testing.md) — Unit/integration/doc tests, proptest, criterion

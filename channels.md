@@ -57,6 +57,7 @@ h1.join().unwrap(); h2.join().unwrap();
 
 ```rust
 use crossbeam_channel::{bounded, tick, after, select};
+use std::time::Duration;
 
 let (work_tx, work_rx) = bounded::<String>(10);
 let ticker = tick(Duration::from_secs(1));     // periodic tick

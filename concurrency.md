@@ -133,20 +133,25 @@ for _ in 0..10 {
 Always paired with a `Mutex`. Wait until another thread signals.
 
 ```rust
+use std::sync::{Arc, Mutex, Condvar};
+
 let pair = Arc::new((Mutex::new(false), Condvar::new()));
 let pair2 = Arc::clone(&pair);
 
-thread::spawn(move || {
+let handle = thread::spawn(move || {
     let (lock, cvar) = &*pair2;
     let mut ready = lock.lock().unwrap();
     while !*ready { ready = cvar.wait(ready).unwrap(); }  // spurious wakeups
     println!("Worker: proceeding");
 });
 
-let (lock, cvar) = &*pair;
-let mut ready = lock.lock().unwrap();
-*ready = true;
-cvar.notify_one();
+{
+    let (lock, cvar) = &*pair;
+    let mut ready = lock.lock().unwrap();
+    *ready = true;
+    cvar.notify_one();
+} // drop the guard before join — otherwise the waiter deadlocks reacquiring the mutex
+handle.join().unwrap();
 ```
 
 **Always re-check the condition in a `while` loop after `wait()` — spurious wakeups are allowed.**
@@ -180,7 +185,7 @@ static REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
 | `lazy_static!` | — | Definition-site (macro) | Pre-1.80 codebases — **migrate away** |
 | `const fn` + `static` | Always | Compile-time | Value is computable at compile time |
 
-**Migration**: replace `lazy_static! { static X: T = expr; }` with `static X: LazyLock<T> = LazyLock::new(|| expr);`.
+**Migration**: replace `lazy_static! { static ref X: T = expr; }` with `static X: LazyLock<T> = LazyLock::new(|| expr);`.
 
 ## Lock-Free Patterns
 

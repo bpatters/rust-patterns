@@ -119,14 +119,14 @@ fn parse_borrowed<'a, T: Deserialize<'a>>(input: &'a str) -> T {
 |---|---|---|---|---|---|
 | JSON | `serde_json` | ✅ | Large | Good | Config, REST APIs, logs |
 | TOML | `toml` | ✅ | Medium | Good | Config (Cargo.toml style) |
-| YAML | `serde_norway` | ✅ | Medium | Good | Nested config. Not `serde_yaml` (archived) or `serde_yml` (unsound, RUSTSEC-2025-0068) |
+| YAML | `serde-saphyr` | ✅ | Medium | Good | Nested config (MSRV 1.89). Old `serde_yaml` API → `serde_norway`. Not `serde_yaml` (archived) or `serde_yml` (RUSTSEC-2025-0068) |
 | postcard | `postcard` | ❌ | Tiny | Very fast | New Rust-to-Rust IPC / `no_std` |
 | rkyv | `rkyv` | ❌ | Tiny | Zero-copy | Large buffers, mmap, IPC where you read without allocating |
 | MessagePack | `rmp-serde` | ❌ | Small | Fast | Cross-language binary |
 | CBOR | `ciborium` | ❌ | Small | Fast | IoT, constrained |
 
 **Choose**:
-- Config humans edit → TOML or JSON. YAML → `serde_norway` (drop-in for old `serde_yaml`). Do not use `serde_yml`
+- Config humans edit → TOML or JSON. YAML → `serde-saphyr` (`serde_saphyr::from_str`). Drop-in for old `serde_yaml` → `serde_norway`. Do not use `serde_yml`
 - New Rust-to-Rust IPC/cache → **postcard**. `bincode` is unmaintained (`cargo add bincode` resolves to a 3.0 stub that is a compiler error). Existing bincode wire format → `wincode`
 - Zero-copy of large in-memory graphs → `rkyv`
 - Cross-language binary → MessagePack or CBOR
@@ -247,7 +247,7 @@ let header = original.split_to(6);  // header = "HEADER", original = "\x00PAYLOA
 |---|---|---|
 | Clone cost | O(n) deep copy | O(1) refcount |
 | Sub-slicing | Borrows with lifetime | Owned, refcount-tracked |
-| Thread safety | Needs `Arc` | `Send + Sync` built-in |
+| Sharing | `Send + Sync`; clone is O(n) (or wrap in `Arc`) | `Send + Sync`; clone is O(1) |
 | Used by | std | tokio, hyper, tonic, axum |
 
 **Use for**: network protocols, packet parsing, splitting buffers across components/threads.

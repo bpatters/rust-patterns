@@ -286,7 +286,7 @@ rust-version = "1.85"     # first release that can compile edition 2024
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt", "macros", "net", "time", "sync"] }  # not "full" here — leaks into every member and downstream
 thiserror = "2"
 tracing = "0.1"
 
@@ -320,6 +320,7 @@ Cross-compile in CI or with `--target`, not as a repo-wide default.
 - **Boolean flags that should be enums.** `search(needle: &str, case_sensitive: bool)` → `enum CaseSensitivity`.
 - **Wide module trees exposed publicly.** Re-export at crate root so users have one import path.
 - **Default features that pull in heavy deps.** Keep `default` minimal.
+- **`tokio` `features = ["full"]` in `[workspace.dependencies]`.** Members inherit it and force it on dependents. Keep workspace tokio minimal; enable `full` only in binaries (see [async.md](./async.md)).
 - **Public types without `Debug`.** Add `#[derive(Debug)]` to anything users might want to inspect.
 - **Returning `Result<T, String>` in public APIs.** Use a real error type.
 - **Not implementing `From`/`Into`/`AsRef`/`Borrow`** on obvious types — saves users from manual conversions.
