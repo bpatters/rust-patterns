@@ -31,6 +31,17 @@ Combinators lose when:
 
 **Rule**: If both branches produce the same type and bodies are short expressions, use a combinator. If branches do fundamentally different things, use `if let` or `match`.
 
+**Let chains (edition 2024, Rust 1.88+)**: flatten nested `if let` with `&&`. Bindings from earlier `let`s are in scope for later conditions. Requires `edition = "2024"` — it will not compile on 2021.
+
+```rust
+if let Some(user) = session.user()
+    && let Some(email) = user.email.as_ref()
+    && email.ends_with("@example.com")
+{
+    send(email);
+}
+```
+
 ## Result Combinators
 
 ```rust
@@ -259,4 +270,4 @@ for n in 0..1000 { if n % 2 == 0 { sum += n * n; } }
 
 - [closures.md](./closures.md) — combinators, `Fn`/`FnMut`/`FnOnce`, `with` pattern
 - [error-handling.md](./error-handling.md) — `?` operator, Result combinators
-- [smart-pointers.md](./smart-pointers.md) — `itertools`, `Cow` for clone-on-write pipelines
+- [smart-pointers.md](./smart-pointers.md) — `Cow` for clone-on-write pipelines

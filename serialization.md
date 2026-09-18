@@ -119,15 +119,16 @@ fn parse_borrowed<'a, T: Deserialize<'a>>(input: &'a str) -> T {
 |---|---|---|---|---|---|
 | JSON | `serde_json` | ✅ | Large | Good | Config, REST APIs, logs |
 | TOML | `toml` | ✅ | Medium | Good | Config (Cargo.toml style) |
-| YAML | `serde_yaml` | ✅ | Medium | Good | Complex nested config |
-| bincode | `bincode` | ❌ | Small | Fast | Rust-to-Rust IPC/cache |
-| postcard | `postcard` | ❌ | Tiny | Very fast | Embedded, `no_std` |
+| YAML | `serde_norway` | ✅ | Medium | Good | Nested config. Not `serde_yaml` (archived) or `serde_yml` (unsound, RUSTSEC-2025-0068) |
+| postcard | `postcard` | ❌ | Tiny | Very fast | New Rust-to-Rust IPC / `no_std` |
+| rkyv | `rkyv` | ❌ | Tiny | Zero-copy | Large buffers, mmap, IPC where you read without allocating |
 | MessagePack | `rmp-serde` | ❌ | Small | Fast | Cross-language binary |
 | CBOR | `ciborium` | ❌ | Small | Fast | IoT, constrained |
 
 **Choose**:
-- Config humans edit → TOML or JSON
-- Rust-to-Rust IPC/cache → bincode
+- Config humans edit → TOML or JSON. YAML → `serde_norway` (drop-in for old `serde_yaml`). Do not use `serde_yml`
+- New Rust-to-Rust IPC/cache → **postcard**. `bincode` is unmaintained (`cargo add bincode` resolves to a 3.0 stub that is a compiler error). Existing bincode wire format → `wincode`
+- Zero-copy of large in-memory graphs → `rkyv`
 - Cross-language binary → MessagePack or CBOR
 - Embedded / `no_std` → postcard
 
@@ -186,7 +187,7 @@ struct PcieCapabilityHeader {
 Replace `unsafe { transmute() }` with compile-time-checked alternatives:
 
 ```rust
-// zerocopy — compile-time checked
+// zerocopy 0.8 — Cargo.toml: zerocopy = { version = "0.8", features = ["derive"] }
 use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
 
 #[derive(FromBytes, IntoBytes, KnownLayout, Immutable)]
@@ -196,25 +197,29 @@ struct SensorReading {
 }
 
 fn parse_sensor(raw: &[u8]) -> Option<&SensorReading> {
-    SensorReading::ref_from_bytes(raw).ok()  // verified at compile time
+    // Derive proves the *type* is transmutable. Size/alignment of *this slice*
+    // is checked at runtime — handle Err. Native-endian u32 is wrong for
+    // on-wire layouts; use from_le_bytes or zerocopy's endian wrappers.
+    SensorReading::ref_from_bytes(raw).ok()
 }
 
-// bytemuck — simple, battle-tested
+// bytemuck — Cargo.toml: bytemuck = { version = "1", features = ["derive"] }
 use bytemuck::{Pod, Zeroable};
 #[derive(Pod, Zeroable, Clone, Copy)]
 #[repr(C)]
 struct GpuRegister { address: u32, value: u32 }
 
-fn cast_registers(data: &[u8]) -> &[GpuRegister] {
-    bytemuck::cast_slice(data)  // safe: Pod guarantees valid bit patterns
+fn cast_registers(data: &[u8]) -> Option<&[GpuRegister]> {
+    // cast_slice panics on bad size/alignment; try_cast_slice is fallible
+    bytemuck::try_cast_slice(data).ok()
 }
 ```
 
 | Approach | Safety | Overhead | Use when |
 |---|---|---|---|
 | Manual field-by-field | ✅ Safe | Copy fields | Small structs, complex layouts |
-| `zerocopy` | ✅ Safe | Zero-copy | Large buffers, many reads |
-| `bytemuck` | ✅ Safe | Zero-copy | Simple `Pod` types, slice casting |
+| `zerocopy` | ✅ Safe | Zero-copy | Large buffers; type layout compile-time, slice size/align runtime |
+| `bytemuck` | ✅ Safe | Zero-copy | Simple `Pod` types; `try_cast_slice` (infallible `cast_slice` panics) |
 | `unsafe { transmute() }` | ❌ Unsafe | Zero-copy | Last resort — avoid |
 
 ## bytes::Bytes — Reference-Counted Buffers
@@ -226,7 +231,7 @@ use bytes::{Bytes, BytesMut, Buf, BufMut};
 
 let mut buf = BytesMut::with_capacity(1024);
 buf.put_u8(0x01);
-buf.put_u16(0x1234);
+buf.put_u16(0x1234);            // big-endian; use put_u16_le for little-endian
 buf.put_slice(b"hello");
 let data: Bytes = buf.freeze();
 
@@ -257,6 +262,7 @@ let header = original.split_to(6);  // header = "HEADER", original = "\x00PAYLOA
 - **Reading unaligned `&field` from `#[repr(C, packed)]`.** Undefined behavior — copy out with `let id = field.id`.
 - **Forgetting endianness.** Always use `from_le_bytes`/`from_be_bytes`/`to_le_bytes`/`to_be_bytes`, never assume host endianness.
 - **Using `Vec<u8>` for network buffers.** `Bytes` gives you cheap cloning and zero-copy slicing.
+- **`cargo add bincode` on a new project.** Latest `bincode` 3.0 is an unmaintained stub that fails to compile. Use `postcard` (or `wincode` for the old wire format).
 
 ## See Also
 

@@ -18,7 +18,7 @@ let mut count = 0;
 let mut inc = || { count += 1; };
 inc(); inc();
 
-// Fn — immutably borrows captures (many calls, concurrent-safe)
+// Fn — immutably borrows captures (many calls; concurrent only if also Send + Sync)
 let prefix = "Result";
 let display = |x: i32| println!("{prefix}: {x}");
 display(1); display(2);
@@ -45,9 +45,10 @@ fn make_adder_v2(n: i32) -> impl Fn(i32) -> i32 { move |x| x + n }
 
 ### Choosing the Right Trait Bound
 
-- Need to call concurrently? → `Fn`
+- Need to call concurrently (by `&self`)? → `Fn`. Cross-thread also needs `F: Send + Sync` (and usually `'static`)
 - Default — most flexible, accepts both `Fn` and `FnMut` → **`FnMut`**
 - Need to consume captures? → `FnOnce`
+- Async callback? → `AsyncFn` / `AsyncFnMut` / `AsyncFnOnce` (`async || { ... }`, Rust 1.85). See [async.md](./async.md)
 
 ## Higher-Order API Design
 
@@ -135,7 +136,8 @@ let level = gpio.with_pin_input(4, |pin| pin.read());
 
 **Guarantees**:
 - Direction always set before the caller's code runs
-- Always restored after, even on early return / `?` / panic
+- Always restored after a **normal** return from the callback (`return` / `?` inside `f` still run the restore — they return from `f`, not from `with_pin_input`)
+- **Not panic-safe as written** — a panic in `f` skips restore. Put restore in a private guard's `Drop` if panic safety matters
 - The `GpioPin` handle cannot escape — borrow checker enforces via lifetime
 - Callers never see `Direction`, never call `set_direction` — impossible to misuse
 

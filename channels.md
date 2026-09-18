@@ -28,9 +28,9 @@ for msg in rx { println!("Received: {msg}"); }  // ends when ALL senders dropped
 - `rx.try_recv()` returns immediately with `Err(Empty)` if nothing ready
 - Channel closes when all `Sender`s are dropped
 
-## crossbeam-channel — The Production Workhorse
+## crossbeam-channel — MPMC, `select!`, timeouts
 
-Faster than `std::sync::mpsc`. Supports **multi-consumer (MPMC)**. Use for production code.
+`std::sync::mpsc` is crossbeam-backed, so "faster" is no longer the reason to switch. Remaining reasons: **multi-consumer (`Receiver: Clone`)**, `select!`, `tick`/`after`. `std::sync::mpmc` exists but is still nightly (`mpmc_channel`).
 
 ```rust
 use crossbeam_channel::{bounded, unbounded, select};
@@ -74,7 +74,7 @@ loop {
 }
 ```
 
-crossbeam's `select!` randomizes order to prevent starvation (like Go).
+This is `crossbeam_channel::select!`, not `tokio::select!` (which cancels losers by drop). Crossbeam's `select!` randomizes order to prevent starvation (like Go).
 
 ## Bounded vs Unbounded and Backpressure
 
@@ -84,7 +84,7 @@ crossbeam's `select!` randomizes order to prevent starvation (like Go).
 | **Bounded** | `send()` blocks until space | Fixed | **Production default** — prevents OOM |
 | **Rendezvous** (`bounded(0)`) | `send()` blocks until `recv()` called | None | Synchronization / handoff |
 
-**Rule**: Always use bounded channels in production unless you can prove the producer will never outpace the consumer.
+**Rule**: Default to bounded channels in production unless you can prove the producer will never outpace the consumer. One-shot **reply** channels (the actor `Get(Sender<i64>)` pattern below) are the usual exception — they carry one value and then close.
 
 ## Actor Pattern
 

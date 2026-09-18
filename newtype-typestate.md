@@ -91,6 +91,13 @@ conn.request("/data");                    // ✅ only works after authenticate
 
 Each transition **consumes** `self` and returns a new type. You can't use the old state after transitioning. Zero runtime cost — `PhantomData` is zero-sized, states are erased.
 
+**Fallible transitions**: if `connect` returns `Result`, `self` is gone on `Err` unless you give it back:
+
+```rust
+fn connect(self) -> Result<Connection<Connected>, (Connection<Disconnected>, Error)> { /* ... */ }
+// or keep &mut self + a runtime enum if failure must be retryable without unwrapping a tuple
+```
+
 **Case study — connection pool**: `pool.acquire()` returns `PooledConnection<Idle>`. Only `Idle` connections can `release()`. Forgetting to commit/rollback is a compile error.
 
 ## Builder with Type States
@@ -151,7 +158,9 @@ struct DiagController<Cfg: BoardConfig> {
     com: Cfg::Com,
     i3c: Cfg::I3c,
 }
-// Adding a 4th bus: one new associated type + one new field. No downstream signature changes.
+// Adding a 4th bus: one new associated type + one new field.
+// Call sites of DiagController<Cfg> stay one parameter. Every `impl BoardConfig`
+// must be updated — a new required associated type is a breaking change unless it has a default.
 ```
 
 ```rust
@@ -189,6 +198,9 @@ struct Locked; struct Unlocked; struct ExtendedUnlocked;
 trait HasRegAccess {}
 impl HasRegAccess for Unlocked {}
 impl HasRegAccess for ExtendedUnlocked {}
+
+trait HasMemAccess {}
+impl HasMemAccess for ExtendedUnlocked {}
 
 trait JtagVendor { /* raw ops */ }
 trait JtagMemoryVendor: JtagVendor { /* extended ops */ }

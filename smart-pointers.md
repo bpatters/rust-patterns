@@ -58,7 +58,7 @@ Mutate data behind a shared (`&`) reference. Runtime borrow checking.
 ```rust
 use std::cell::{Cell, RefCell};
 
-// Cell<T>: Copy-based — never panics
+// Cell<T>: never panics. get() needs Copy; replace/take work for non-Copy
 struct Counter { count: Cell<u32> }
 impl Counter {
     fn increment(&self) {  // &self, not &mut self!
@@ -77,7 +77,7 @@ impl Cache {
 
 | | `Cell<T>` | `RefCell<T>` |
 |---|---|---|
-| Works with | `Copy` types (or swap/replace) | Any type |
+| Works with | Any `T`. `get()` needs `Copy`; `set`/`replace`/`swap`/`take` (`T: Default`) work for non-Copy | Any type |
 | Panics | Never | On double-mutable-borrow |
 | Thread-safe | ❌ | ❌ |
 
@@ -204,7 +204,7 @@ Use `pin-project` whenever wrapping a `Future` or `Stream` — eliminates error-
 | Struct fields | Declaration order (top to bottom) | Stable since RFC 1857 |
 | Tuple elements | Declaration order (left to right) | `(a, b, c)` drops a, then b, then c |
 
-**Practical impact**: If your struct has a `JoinHandle` and a `Sender`, field order determines which drops first. If the thread reads from the channel, drop `Sender` first (close the channel), then join. **Put `Sender` above `JoinHandle`.**
+**Practical impact**: Fields drop in declaration order, but `std::thread::JoinHandle` and `tokio::task::JoinHandle` **detach on drop** — they do not `join()` or `abort()`. For "close the channel, then wait": put `Option<Sender>` first, and in `Drop` do `self.tx.take(); self.handle.take().unwrap().join()...`.
 
 ### ManuallyDrop<T>
 
@@ -248,11 +248,11 @@ union IntOrString {
 
 - **Using `Rc` across threads.** `Rc` is `!Send`. Use `Arc`.
 - **Deep nested `Box`/`Rc` when `Vec<T>` works.** Lists of known length → `Vec`.
-- **`Cell` for non-Copy types.** Use `RefCell` (single thread) or `Mutex` (multi).
+- **`Cell::get()` on a non-Copy type.** `get()` needs `Copy`. For non-Copy, `replace`/`take` (often `Cell<Option<T>>`). Use `RefCell` when you need `&`/`&mut` to the interior.
 - **`RefCell` across threads.** `RefCell` is `!Sync`. Use `Mutex` or `RwLock`.
 - **Reaching for `unsafe` and `Pin` when a simpler design works.** Self-referential types are hard. Consider `ouroboros`/`self_cell` or restructure.
-- **Holding a `MutexGuard` across `.await` in async code.** Use `tokio::sync::Mutex` or drop the guard.
-- **Ignoring drop order when fields reference each other.** Resource leaks, deadlocks.
+- **Holding a `std::sync::MutexGuard` across `.await`.** Compile error on `tokio::spawn`. Nested `{ ... }` block, not `drop(guard)`. `std::sync::Mutex` is correct when the lock is not held across `.await`.
+- **Assuming `JoinHandle` drop joins the thread.** It detaches. Join or abort explicitly in `Drop`.
 - **`mem::forget` for "I don't want to drop this".** Use `ManuallyDrop` if you need later access, otherwise document the leak.
 
 ## See Also

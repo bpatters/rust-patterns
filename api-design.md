@@ -59,6 +59,7 @@ pub use parser::Parser;
 8. **Mark types and functions `#[must_use]`** — prevents silent discard of important values, `Result`s, guards
 9. **Mark public enums `#[non_exhaustive]`** — adding variants is not a breaking change
 10. **Implement `FromStr` for types parsed from text** — enables `.parse()`, integrates with `clap`
+11. **Public `-> impl Trait` in edition 2024 captures all in-scope lifetimes.** If that is too tight, add `+ use<...>` (see [traits.md](./traits.md)). Public `async fn` in traits should promise `Send` (or ship a `trait-variant` pair) if callers `tokio::spawn`
 
 ### Sealed Trait Pattern
 
@@ -179,12 +180,19 @@ impl std::error::Error for PortError {}
 impl TryFrom<u16> for Port {
     type Error = PortError;
     fn try_from(value: u16) -> Result<Self, Self::Error> {
+        // Destination port: 0 is invalid. Bind-to-ephemeral uses port 0
+        // (`TcpListener::bind(("127.0.0.1", 0))`) — that is a different type
+        // (`BindPort`), not this one. Keep the field private so Port(0) cannot be forged.
         if value == 0 { Err(PortError::Zero) } else { Ok(Port(value)) }
     }
 }
 
+impl Port {
+    pub fn get(&self) -> u16 { self.0 }
+}
+
 fn start_server(port: Port) {  // No validation needed — Port is valid by construction.
-    println!("Listening on port {}", port.0);
+    println!("Listening on port {}", port.get());
 }
 
 let port = Port::try_from(8080)?;  // Validate once at the boundary
@@ -223,14 +231,14 @@ let port: Port = "8080".parse()?;
 # Cargo.toml
 [features]
 default = ["json"]
-json = ["dep:serde_json"]      # dep: syntax (1.60+) avoids implicit features
+json = ["dep:serde_json"]      # dep: avoids an implicit feature named serde_json
 xml = ["dep:quick-xml"]
 full = ["json", "xml"]
 
 [dependencies]
 serde = "1"
 serde_json = { version = "1", optional = true }
-quick-xml = { version = "0.31", optional = true }
+quick-xml = { version = "0.42", optional = true, features = ["serialize"] }
 ```
 
 ```rust
@@ -270,13 +278,21 @@ pub struct LargeStruct { /* ... */ }
 # Root Cargo.toml
 [workspace]
 members = ["core", "parser", "server", "client", "cli"]
+resolver = "3"            # edition-2024 default; set explicitly in mixed workspaces
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"     # first release that can compile edition 2024
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
+thiserror = "2"
 tracing = "0.1"
 
-# In each member:
+# In each member Cargo.toml:
+# [package]
+# edition.workspace = true
 # [dependencies]
 # serde = { workspace = true }
 ```
@@ -288,20 +304,15 @@ tracing = "0.1"
 Project-level Cargo configuration:
 
 ```toml
-[build]
-target = "x86_64-unknown-linux-musl"
-
-[target.aarch64-unknown-linux-gnu]
-runner = "qemu-aarch64-static"
-linker = "aarch64-linux-gnu-gcc"
+# Do NOT set [build] target here unless every developer cross-compiles —
+# a default target of musl breaks local macOS/Windows `cargo test`.
 
 [alias]
 xt = "test --workspace --release"
 ci = "clippy --workspace -- -D warnings"
-
-[env]
-IPMI_LIB_PATH = "/usr/lib/bmc"
 ```
+
+Cross-compile in CI or with `--target`, not as a repo-wide default.
 
 ## Anti-Patterns
 
@@ -318,4 +329,4 @@ IPMI_LIB_PATH = "/usr/lib/bmc"
 
 - [newtype-typestate.md](./newtype-typestate.md) — type-state for builder APIs
 - [error-handling.md](./error-handling.md) — designing error types for public APIs
-- [traits.md](./traits.md) — sealed traits, extension traits, object safety
+- [traits.md](./traits.md) — sealed traits, extension traits, dyn compatibility

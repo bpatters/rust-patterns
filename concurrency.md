@@ -30,7 +30,7 @@ let data = vec![1, 2, 3];
 thread::spawn(move || println!("{data:?}"));  // moves data
 ```
 
-## Scoped Threads (Rust 1.63+)
+## Scoped Threads
 
 Threads that can **borrow** from the parent scope — no `Arc::clone()` needed:
 
@@ -60,6 +60,7 @@ use rayon::prelude::*;
 
 let data: Vec<u64> = (0..1_000_000).collect();
 let sum: u64 = data.par_iter().map(|x| x * x).sum();
+let mut numbers = vec![5, 2, 8, 1, 9, 3];
 numbers.par_sort();  // parallel sort
 ```
 
@@ -133,9 +134,10 @@ Always paired with a `Mutex`. Wait until another thread signals.
 
 ```rust
 let pair = Arc::new((Mutex::new(false), Condvar::new()));
+let pair2 = Arc::clone(&pair);
 
 thread::spawn(move || {
-    let (lock, cvar) = &*pair;
+    let (lock, cvar) = &*pair2;
     let mut ready = lock.lock().unwrap();
     while !*ready { ready = cvar.wait(ready).unwrap(); }  // spurious wakeups
     println!("Worker: proceeding");
@@ -185,16 +187,16 @@ static REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
 **Practical advice**: Lock-free code is hard. Use `Mutex`/`RwLock` unless profiling shows lock contention is your bottleneck. When you need lock-free, reach for proven crates (`crossbeam`, `arc-swap`, `dashmap`) — don't roll your own.
 
 Common patterns:
-- **Atomic flag/CAS spin** — for very short critical sections, contested rarely
-- **SPSC ring buffer** — `crossbeam::queue::ArrayQueue`
-- **Sequence lock (SeqLock)** — for single-writer / multi-reader of small values
+- **Atomic flag/CAS spin** — for very short critical sections, contested rarely. Counters whose only read is after `join()` can use `Ordering::Relaxed`. A **flag that publishes other data** needs `Release`/`Acquire` (or `SeqCst` if you do not want to think)
+- **Bounded MPMC queue** — `crossbeam::queue::ArrayQueue` (not SPSC)
+- **Sequence lock (SeqLock)** — for single-writer / multi-reader of small values; prefer a crate, don't roll your own
 - **RCU** — via `arc-swap` or `crossbeam-epoch`
 
 ## Decision Tree
 
 ```text
 Need shared mutable state?
-├── No  → Channels (Ch 5)
+├── No  → Channels
 └── Yes → How much contention?
      ├── Read-heavy    → RwLock
      ├── Short critical → Mutex
@@ -212,7 +214,7 @@ Need parallelism?
 - **`lazy_static!` in new code.** Use `OnceLock` / `LazyLock`.
 - **Manual spin locks in production.** Use `std::sync::Mutex` or `parking_lot::Mutex`.
 - **Sharing `Rc` across threads.** `Rc` is `!Send`. Use `Arc`.
-- **Holding a `MutexGuard` across `.await` (in async code).** Use `tokio::sync::Mutex` or drop the guard before `.await`.
+- **Holding a `std::sync::MutexGuard` across `.await`.** Compile error on `tokio::spawn` (`!Send`). Nested `{ ... }` block so the guard drops before `.await` — `drop(guard)` is not enough. Short critical section with no `.await` while held → `std::sync::Mutex`. Must hold across `.await` → `tokio::sync::Mutex`.
 - **Polling with `try_lock` in a loop.** Wasteful — use `Condvar` or channels.
 - **`.unwrap()` on lock acquisition.** Decide whether to recover from poisoned locks or propagate the error.
 - **Rolling your own lock-free structure.** Reach for `crossbeam`, `arc-swap`, `dashmap`.

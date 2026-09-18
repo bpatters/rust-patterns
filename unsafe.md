@@ -28,14 +28,15 @@ pub struct StackBuf<T, const N: usize> {
 impl<T, const N: usize> StackBuf<T, N> {
     pub fn new() -> Self {
         StackBuf {
-            data: [const { std::mem::MaybeUninit::uninit() }; N],  // Rust 1.79+
+            data: [const { std::mem::MaybeUninit::uninit() }; N],
             len: 0,
         }
     }
 
     pub fn push(&mut self, value: T) -> Result<(), T> {
         if self.len >= N { return Err(value); }
-        // SAFETY: len < N, so data[len] is within bounds.
+        // Safe: indexing [MaybeUninit<T>; N] and MaybeUninit::new need no unsafe.
+        // Overwriting MaybeUninit does not drop T (Drop of MaybeUninit is a no-op).
         self.data[self.len] = std::mem::MaybeUninit::new(value);
         self.len += 1;
         Ok(())
@@ -62,7 +63,8 @@ impl<T, const N: usize> Drop for StackBuf<T, N> {
 ## FFI Patterns — Calling C from Rust
 
 ```rust
-extern "C" {
+// Edition 2024 requires `unsafe extern`. Pre-2024 still accepts `extern "C" { ... }`.
+unsafe extern "C" {
     fn strlen(s: *const std::ffi::c_char) -> usize;
     fn printf(format: *const std::ffi::c_char, ...) -> std::ffi::c_int;
 }
@@ -73,8 +75,9 @@ fn safe_strlen(s: &str) -> usize {
     unsafe { strlen(c_string.as_ptr()) }
 }
 
-// Calling Rust from C:
-#[no_mangle]
+// Calling Rust from C. Edition 2024 requires #[unsafe(no_mangle)]
+// (no_mangle / export_name / link_section are unsafe attributes).
+#[unsafe(no_mangle)]
 pub extern "C" fn rust_add(a: i32, b: i32) -> i32 {
     a + b
 }
@@ -103,7 +106,12 @@ pub extern "C" fn rust_add(a: i32, b: i32) -> i32 {
 | Invalid enum value | `transmute::<u8, bool>(2)` — `bool` can only be 0 or 1 |
 | Unaligned reference from packed | `&field` on `#[repr(C, packed)]` may be unaligned |
 
-**Note**: `[const { MaybeUninit::uninit() }; N]` (Rust 1.79+) is the safe way to create an array of `MaybeUninit` — no `unsafe` or `assume_init` needed.
+**Note**: `[const { MaybeUninit::uninit() }; N]` is the safe way to create an array of `MaybeUninit` — no `unsafe` or `assume_init` needed.
+
+**Edition 2024 unsafe hygiene**:
+- `unsafe fn` bodies still need inner `unsafe { }` around unsafe ops (`unsafe_op_in_unsafe_fn` warns by default)
+- `std::env::set_var` / `remove_var` are `unsafe` (data race with other threads)
+- Do not take `&` / `&mut` to `static mut` — use raw pointers inside `unsafe`
 
 ## When to Use `unsafe` in Production
 
@@ -170,6 +178,7 @@ fn connection_pool() {
     let mut connections: Slab<Connection> = Slab::with_capacity(256);
 
     let key1 = connections.insert(Connection { id: 1001, buffer: [0; 1024], active: true });
+    let key2 = connections.insert(Connection { id: 1002, buffer: [0; 1024], active: true });
     if let Some(conn) = connections.get_mut(key1) {
         conn.buffer[0..5].copy_from_slice(b"hello");
     }
@@ -204,8 +213,9 @@ Environment?
 - **Hand-rolled spinlocks, lock-free queues, or atomics patterns.** Reach for `parking_lot`, `crossbeam`, `arc-swap`, `dashmap` — proven implementations.
 - **`static mut` for shared state.** `static` + `AtomicX` or `Mutex`/`RwLock` instead.
 - **Forgetting `#[repr(C)]` on FFI structs.** Layout is undefined otherwise.
+- **Bare `#[no_mangle]` in edition 2024.** Use `#[unsafe(no_mangle)]` and a `SAFETY:` comment (unique symbol).
 - **Exposing `unsafe` in public APIs without safe wrappers.** Library users should never need `unsafe` for normal use.
-- **Allocating in arena types with non-trivial `Drop` impls.** Arena doesn't call destructors — file handles, sockets leak. Only allocate types without meaningful `Drop`, or manually drop them before the arena drops.
+- **Putting `Drop` types in `bumpalo::Bump::alloc`.** `Bump::alloc` does **not** run destructors when the bump is dropped (file handles, sockets leak). Use `bumpalo::boxed::Box`, `drop_in_place`, or only store types without meaningful `Drop`. `typed-arena` and `slab` **do** run destructors.
 
 ## See Also
 

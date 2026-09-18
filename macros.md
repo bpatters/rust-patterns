@@ -112,7 +112,7 @@ let query = sql!(SELECT * FROM users WHERE id = ?);
 | `Serialize`, `Deserialize` | serde | JSON/YAML/etc. encoding |
 | `Error` | thiserror | `std::error::Error` + `Display` |
 | `Parser` | clap | CLI argument parsing |
-| `Builder` | derive_builder | Builder pattern |
+| `Builder` | `bon` (or `derive_builder`) | Builder pattern |
 
 **Practical advice**: Use derive macros liberally — they eliminate error-prone boilerplate. Use existing crates (`serde`, `thiserror`, `clap`) before building custom ones.
 
@@ -134,6 +134,8 @@ macro_rules! diag_log {
 ```
 
 **Rule**: Always use `$crate::` in `#[macro_export]` macros. Never use your crate's name directly.
+
+`#[macro_export]` also places the macro at the **crate root**, ignoring the module path — callers write `crate::diag_log!`, not `crate::macros::diag_log!`.
 
 ## Recursive Macros and `tt` Munching
 

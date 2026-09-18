@@ -10,8 +10,11 @@ Load this when: designing error types; choosing between `thiserror` and `anyhow`
 | Error types | Concrete enums (callers can match) | `anyhow::Error` (opaque) |
 | Effort | Define your enum | Just use `Result<T>` |
 | Downcasting | Not needed — pattern match | `error.downcast_ref::<MyError>()` |
+| `.context()` | Not available (that's an anyhow trait) | `with_context` / `context` on any `Result` |
 
 ### thiserror (Libraries)
+
+`thiserror = "2"` is current (`cargo add thiserror`). The derive API below is unchanged from 1.x.
 
 ```rust
 use thiserror::Error;
@@ -53,7 +56,7 @@ fn read_config(path: &str) -> Result<Config> {
 }
 
 fn main() -> Result<()> {
-    let config = read_config("server.toml")?;
+    let config = read_config("config.json")?;
     if config.name.is_empty() { bail!("server name cannot be empty"); }
     Ok(())
 }
@@ -133,7 +136,7 @@ fn find_user_email(users: &[User], name: &str) -> Option<String> {
 | `Result<T, E>` | **Expected failures** — file not found, network timeout, parse error |
 | `panic!()` | **Bugs** — index out of bounds, invariant violated, "this can't happen" |
 | `process::abort()` | Unrecoverable — security violation, corrupt data |
-| `catch_unwind` | FFI boundaries, thread pools — isolate panic from caller |
+| `catch_unwind` | FFI boundaries, thread pools — isolate panic from caller. No-op if `panic = abort`. Closure must be `UnwindSafe` (often `AssertUnwindSafe`). Unwinding from Rust into C is UB — catch **inside** `extern "C"` exports |
 
 ```rust
 fn get_element(data: &[i32], index: usize) -> &i32 {
@@ -151,21 +154,21 @@ match result {
 
 ## Send + 'static Errors Across Threads
 
-Threads spawned with `thread::spawn` require `T: Send + 'static` for the closure. Errors must satisfy this:
+`thread::spawn` requires `F: Send + 'static`. `Box<dyn Error>` is **not** `Send`. Returning errors from threads needs `E: Send + 'static`:
 
 ```rust
-// ❌ Doesn't compile — closure captures non-'static reference
-let path = String::from("/tmp/config");
-thread::spawn(move || {
-    let err: std::io::Error = std::fs::read_to_string(&path).unwrap_err();
-    // err is fine — it's owned
-});
+// ❌ Doesn't compile — Box<dyn Error> is not Send
+fn load() -> Result<String, Box<dyn std::error::Error>> {
+    Ok(std::fs::read_to_string("/tmp/config")?)
+}
+std::thread::spawn(|| load()); // error: `dyn Error` cannot be sent between threads
 
-// ✅ any thread-safe error works — they're all Send + 'static
-let err: Box<dyn std::error::Error + Send + Sync> = std::fs::read_to_string(&path).unwrap_err();
+// ✅ Thread-safe error type
+fn load() -> Result<String, Box<dyn std::error::Error + Send + Sync>> { /* ... */ }
+std::thread::spawn(|| load()); // OK
 ```
 
-`anyhow::Error` is `Send + Sync + 'static` — works across threads.
+`anyhow::Error` is `Send + Sync + 'static` — works across threads. Do not put `anyhow::Error` or `Box<dyn Error>` in a **library public** API (callers cannot match).
 
 ## From Conversions for Crate Boundaries
 
@@ -187,9 +190,9 @@ Or use `#[from]` in `thiserror` to auto-generate.
 - **`.unwrap()` / `.expect()` in library code.** Return `Result`; let the caller decide. Use only in tests and prototypes.
 - **`panic!` for expected errors.** File-not-found, network timeout, parse error → `Result`.
 - **Stringly-typed errors.** `Result<T, String>` throws away type information — use `thiserror`.
-- **Silently swallowing errors.** `let _ = fallible_op()?;` — log it, propagate, or handle.
+- **Silently swallowing errors.** `let _ = fallible_op();` discards `Err`. (`let _ = fallible_op()?;` still propagates — it only discards `Ok`.) Log it, propagate with `?`, or handle.
 - **Catching all errors with `Err(e) => eprintln!("{e}")`.** Sometimes correct, but be intentional — you may be hiding bugs.
-- **Implementing `From` for foreign types when an orphan-rule workaround exists.** Use `#[from]` in `thiserror` for newtype wrapping, or use `.map_err()`.
+- **Putting `anyhow::Error` / `Box<dyn Error>` in a library public API.** Callers cannot match; `Box<dyn Error>` is not `Send`. Wrap foreign errors in *your* type via `#[from]` or `.map_err()` when you do not want implicit `?` conversion. You **can** `impl From<Foreign> for Local`; you **cannot** `impl From<ForeignA> for ForeignB`.
 - **Generic `Result<T, Box<dyn Error>>` in library APIs.** Callers can't match. Define a real error type.
 - **Using `catch_unwind` as control flow.** It's for boundary safety, not error handling.
 - **Huge error enums with one variant per failure point.** Group related failures; use `#[source]` for the underlying cause.

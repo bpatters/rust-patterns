@@ -14,7 +14,7 @@ fn max_of<T: PartialOrd>(a: T, b: T) -> T {
 // Compiler generates max_of_i32, max_of_f64, max_of_str — three real functions.
 ```
 
-**Key difference from Java/C# generics**: Bounds are checked at the **definition site** (`T: PartialOrd` is verified when you write `fn max_of`), not at the instantiation site. Errors are caught early.
+Rust **monomorphizes** (one specialized copy per type), unlike Java erasure. The difference from **C++ templates** is that trait bounds are checked at the **definition site** (`T: PartialOrd` is required when you write `fn max_of`) — you can only call methods that appear in the bounds. Call-site errors are "T doesn't impl Trait", not deep instantiation failures.
 
 **Cost**: Binary size. Each unique type used generates a copy. If `serialize<T: Serialize>` is called with 50 types, the binary has 50 copies.
 
@@ -45,10 +45,11 @@ fn log_item(item: &dyn std::fmt::Display) {
 ## Generics vs Enum vs dyn Trait — Decision Guide
 
 ```text
-Do you know ALL possible types at compile time?
-├── YES, small closed set         → Enum (exhaustive match, zero cost)
-├── YES, but the set is open      → Generics (monomorphized, zero cost)
-└── NO, types determined at runtime → dyn Trait (vtable indirection)
+Known set of types?
+├── Closed set (variants never added by users) → enum (exhaustive match, zero cost)
+├── Open set, hot path (millions of calls)     → generics/<T: Trait> (inlined)
+├── Open set, cold path (logging, errors, cfg) → dyn Trait (one vtable indirection)
+└── Need heterogeneous collection              → Vec<Box<dyn Trait>> or enum dispatch
 ```
 
 | Approach | Dispatch | Extensible? | Overhead |
@@ -101,7 +102,7 @@ fn log_all(items: &[Box<dyn std::fmt::Display>]) {
 
 ## Const Generics
 
-Parameterize over **constant values**, not just types (Rust 1.51+).
+Parameterize over **constant values**, not just types.
 
 ```rust
 struct Matrix<const ROWS: usize, const COLS: usize> {
@@ -138,9 +139,9 @@ const BOILING_F: f64 = celsius_to_fahrenheit(100.0);  // Computed at compile tim
 
 **Use cases**: Lookup tables, register masks, threshold arrays, simple arithmetic constants. Eliminates the need for `lazy_static!` / `OnceLock` when the value is purely compile-time computable.
 
-**Allowed in `const fn` (Rust 1.79+)**: arithmetic, bit ops, control flow (`if`/`match`/`loop`/`while`), references, `panic!` (becomes compile error if reached at const time), basic float ops.
+**Allowed in `const fn`**: arithmetic, bit ops, control flow (`if`/`match`/`loop`/`while`), references, calling other `const fn`s, `panic!` (compile error if reached at const time), basic float ops, many inherent std methods.
 
-**NOT allowed**: heap allocation, trait method calls, I/O.
+**NOT allowed** (stable): heap allocation (`Box`/`Vec`/`String`), I/O, generic trait method calls (const traits are not stable). The body must be const-evaluable — a `const` context requires compile-time evaluation or it is a hard error.
 
 **Idiomatic advice**: Make constructors and simple utility functions `const fn` whenever possible — costs nothing, enables callers to use them in const contexts.
 
@@ -152,6 +153,6 @@ const BOILING_F: f64 = celsius_to_fahrenheit(100.0);  // Computed at compile tim
 
 ## See Also
 
-- [traits.md](./traits.md) — `impl Trait` vs `dyn Trait`, associated types, object safety
+- [traits.md](./traits.md) — `impl Trait` vs `dyn Trait`, associated types, dyn compatibility, `use<>` capturing
 - [smart-pointers.md](./smart-pointers.md) — `Box<dyn Trait>` for the heterogeneous-collection case
 - [api-design.md](./api-design.md) — when to seal a trait vs leave it open for downstream impls

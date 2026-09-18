@@ -7,7 +7,7 @@ Start with [SKILL.md](./SKILL.md) for orientation, decision trees, and the anti-
 ## Part I: Type-Level Patterns
 
 - [**generics.md**](./generics.md) — Monomorphization, const generics, `const fn`
-- [**traits.md**](./traits.md) — Associated types, GATs, blanket impls, vtables, object safety
+- [**traits.md**](./traits.md) — Associated types, GATs, blanket impls, vtables, dyn compatibility
 - [**newtype-typestate.md**](./newtype-typestate.md) — Newtype, type-state, builder with states, config trait
 - [**phantomdata.md**](./phantomdata.md) — Lifetime branding, variance, unit-of-measure, drop check
 
@@ -22,12 +22,12 @@ Start with [SKILL.md](./SKILL.md) for orientation, decision trees, and the anti-
 ## Part III: Systems & Production
 
 - [**error-handling.md**](./error-handling.md) — thiserror vs anyhow, `?`, panic, `catch_unwind`
-- [**serialization.md**](./serialization.md) — serde fundamentals, repr(C), zerocopy, bytes::Bytes
+- [**serialization.md**](./serialization.md) — serde fundamentals, postcard (not bincode), repr(C), zerocopy, bytes::Bytes
 - [**unsafe.md**](./unsafe.md) — 5 superpowers, sound abstractions, FFI, arenas
 - [**macros.md**](./macros.md) — `macro_rules!`, proc macros, syn/quote
 - [**testing.md**](./testing.md) — Unit/integration/doc tests, proptest, criterion
 - [**api-design.md**](./api-design.md) — Module layout, ergonomic params, Parse-Don't-Validate, feature flags
-- [**async.md**](./async.md) — Tokio, Future, Send bounds, common pitfalls
+- [**async.md**](./async.md) — Tokio (not async-std), async fn in traits, AsyncFn, Send bounds
 
 ## Quick Lookup
 

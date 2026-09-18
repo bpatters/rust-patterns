@@ -29,12 +29,16 @@ struct Slice<'a, T> {
 
 ## Lifetime Branding
 
-Prevent mixing values from different "sessions" or "contexts":
+Prevent mixing values from different "sessions" or "contexts". Branding needs a **fresh invariant lifetime per instance**, usually via an HRTB — `PhantomData` alone does not separate two `Arena<'a>` values in the same scope.
 
 ```rust
+use std::cell::RefCell;
+use std::marker::PhantomData;
+
 struct ArenaHandle<'arena> {
     index: usize,
-    _brand: PhantomData<*mut &'arena ()>,
+    // Invariant over 'arena, and Send + Sync (unlike *mut, which is !Send + !Sync)
+    _brand: PhantomData<fn(&'arena ()) -> &'arena ()>,
 }
 
 struct Arena<'arena> {
@@ -42,15 +46,27 @@ struct Arena<'arena> {
     _phantom: PhantomData<&'arena ()>,
 }
 
+/// Each call gets a unique lifetime that cannot be forged or mixed.
+fn with_arena<R>(f: impl for<'arena> FnOnce(&Arena<'arena>) -> R) -> R {
+    let arena = Arena { data: RefCell::new(Vec::new()), _phantom: PhantomData };
+    f(&arena)
+}
+
 impl<'arena> Arena<'arena> {
     fn alloc(&self, value: String) -> ArenaHandle<'arena> { /* ... */ }
     fn get(&self, handle: &ArenaHandle<'arena>) -> String { /* ... */ }
 }
 
-// Can't use handle from arena1 with arena2 — compile-time error.
+with_arena(|arena1| {
+    let h = arena1.alloc("hello".into());
+    arena1.get(&h); // ✅
+    // with_arena(|arena2| arena2.get(&h)); // ❌ handle branded to arena1
+});
 ```
 
 **Use**: arena allocators, generational references, session tokens, separating handles from different resources.
+
+Do not use `PhantomData<*mut &'a ()>` for branding unless you *want* `!Send + !Sync`.
 
 ## Unit-of-Measure Pattern
 
@@ -159,28 +175,30 @@ struct CallbackSlot<T> {
 
 ### PhantomData Variance Cheat Sheet
 
-| PhantomData type | Variance over `T` | Variance over `'a` | Use when |
+| PhantomData type | Variance over `T` | Send/Sync | Use when |
 |---|---|---|---|
-| `PhantomData<T>` | Covariant | — | Logically own a `T` |
-| `PhantomData<&'a T>` | Covariant | Covariant | Borrow a `T` with lifetime `'a` |
-| `PhantomData<&'a mut T>` | **Invariant** | Covariant | Mutably borrow `T` |
-| `PhantomData<*const T>` | Covariant | — | Non-owning pointer |
-| `PhantomData<*mut T>` | **Invariant** | — | Non-owning mutable pointer |
-| `PhantomData<fn(T)>` | **Contravariant** | — | `T` appears in argument position |
-| `PhantomData<fn() -> T>` | Covariant | — | `T` appears in return position |
-| `PhantomData<fn(T) -> T>` | **Invariant** | — | `T` in both positions |
+| `PhantomData<T>` | Covariant | Follows `T` | Logically own a `T` (dropck owns `T`) |
+| `PhantomData<&'a T>` | Covariant | `Send`/`Sync` iff `T: Sync` | Borrow a `T` with lifetime `'a` |
+| `PhantomData<&'a mut T>` | **Invariant** | `Send` iff `T: Send`, `Sync` iff `T: Sync` | Mutably borrow `T` |
+| `PhantomData<*const T>` | Covariant | **Always `!Send + !Sync`** | Non-owning pointer that must not cross threads |
+| `PhantomData<*mut T>` | **Invariant** | **Always `!Send + !Sync`** | Non-owning mutable pointer, same |
+| `PhantomData<fn(T)>` | **Contravariant** | Always `Send + Sync` | `T` in argument position |
+| `PhantomData<fn() -> T>` | Covariant | Always `Send + Sync` | `T` in return position |
+| `PhantomData<fn(T) -> T>` | **Invariant** | Always `Send + Sync` | Invariance without losing `Send` |
 
 ### Decision Rule
 
-- Start with `PhantomData<&'a T>` (covariant). It's the most permissive — callers can shorten lifetimes.
-- Switch to `PhantomData<&'a mut T>` (invariant) only if your abstraction hands out mutable access.
-- Use `PhantomData<fn(T)>` (contravariant) almost never — only for callback-storage scenarios.
+- Borrowed view: start with `PhantomData<&'a T>` (covariant). Switch to `PhantomData<&'a mut T>` only if the abstraction hands out mutable access.
+- Owning pointer (Vec-like): `*const T` **plus** `PhantomData<T>` so `Send`/`Sync` follow `T` and dropck treats it as owned. `*const T` alone makes the wrapper `!Send`.
+- Need invariance + `Send`: `PhantomData<fn(T) -> T>`, not `*mut T`.
+- `PhantomData<fn(T)>` (contravariant) almost never — only for callback-storage.
 
 ## Anti-Patterns
 
 - **`PhantomData<T>` on a view/reference type.** Should be `PhantomData<&'a T>` or `PhantomData<*const T>`. Wrong choice makes the borrow checker too strict or too lax.
 - **Missing `PhantomData` on a struct holding raw pointers.** Causes confusing borrow-check errors and soundness issues.
 - **Wrong variance for a callback holder.** Use `PhantomData<fn(T)>` (contravariant) for callback slots that take `T`, not `PhantomData<T>`.
+- **`PhantomData<*const T>` on a type you then `unsafe impl Send`.** Prefer a marker that already has the auto-traits you want (`PhantomData<T>` or `fn(...)`) so you don't need the unsafe impl.
 
 ## See Also
 

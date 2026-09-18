@@ -16,8 +16,13 @@ mod tests {
     fn test_factorial_zero() { assert_eq!(factorial(0), 1); }
 
     #[test]
+    #[cfg(debug_assertions)] // overflow checks are debug-only unless overflow-checks = true
     #[should_panic(expected = "overflow")]
-    fn test_factorial_overflow() { factorial(100); }
+    fn test_factorial_overflow() {
+        // Release wraps silently — this test is debug-only. Prefer checked_mul
+        // and assert None if the test must pass under cargo test --release.
+        factorial(100);
+    }
 
     #[test]
     fn test_with_result() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,9 +47,9 @@ fn from_outside() { assert_eq!(factorial(10), 3_628_800); }
 /// assert_eq!(factorial(5), 120);
 /// ```
 ///
-/// ```should_panic
-/// my_crate::factorial(100);  // panics on u64 overflow
-/// ```
+/// Overflow panics only in debug (or with `overflow-checks = true`).
+/// Do not use a `should_panic` doc-test for debug-only panics — it fails
+/// under `cargo test --release`.
 pub fn factorial(n: u64) -> u64 { (1..=n).product() }
 ```
 
@@ -63,23 +68,11 @@ mod tests {
         // ...
     }
 
-    // RAII cleanup with Drop
-    struct TempDir { path: std::path::PathBuf }
-    impl TempDir {
-        fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("test_{}", rand::random::<u32>()));
-            std::fs::create_dir_all(&path).unwrap();
-            TempDir { path }
-        }
-    }
-    impl Drop for TempDir {
-        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.path); }
-    }
-
+    // Cargo.toml: tempfile = "3"
     #[test]
     fn test_file_ops() {
-        let dir = TempDir::new();  // created
-        std::fs::write(dir.path.join("test.txt"), "hello").unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("test.txt"), "hello").unwrap();
         // dir dropped here → temp directory cleaned up
     }
 }
@@ -110,7 +103,7 @@ proptest! {
     fn parse_roundtrip(x in any::<f64>().prop_filter("finite", |x| x.is_finite())) {
         let s = format!("{x}");
         let parsed: f64 = s.parse().unwrap();
-        prop_assert!((x - parsed).abs() < f64::EPSILON);
+        prop_assert_eq!(x, parsed); // Display of finite f64 is designed to round-trip
     }
 }
 ```
@@ -120,6 +113,16 @@ proptest generates hundreds of random inputs and **shrinks** failures to the min
 **When to use**: large input space, want confidence for edge cases you didn't think of, parsing/serialization invariants, commutation laws.
 
 ## Benchmarking with Criterion
+
+```toml
+# Cargo.toml
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "my_benchmarks"
+harness = false   # required — otherwise libtest is the entry point
+```
 
 ```rust
 // benches/my_benchmarks.rs
@@ -210,7 +213,7 @@ mod tests {
 - **Benchmarking without `black_box`.** The compiler optimizes away the work you're trying to measure.
 - **Reaching for `mockall`/`mockito` when a small handwritten trait mock works.** Mocking frameworks add complexity.
 - **Tests that don't run any assertions.** `#[test] fn test_x() { /* ... */ }` is not a test.
-- **Testing private internals.** Test through the public API; refactor when internals need testing.
+- **Testing private internals from `tests/`.** Integration tests see only the public API. Unit tests in `#[cfg(test)] mod tests` in the same module **are** the place to test private helpers.
 - **`unwrap()` in tests is fine** — but consider `assert_eq!` for richer failure messages.
 
 ## See Also

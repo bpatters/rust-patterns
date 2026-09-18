@@ -1,6 +1,6 @@
 # Traits In Depth
 
-Load this when: designing a new trait; choosing associated type vs generic parameter; deciding `impl Trait` vs `dyn Trait`; figuring out object-safety errors; writing extension traits; using GATs.
+Load this when: designing a new trait; choosing associated type vs generic parameter; deciding `impl Trait` vs `dyn Trait`; figuring out dyn-compatibility / object-safety errors (`E0038`); writing `async fn` in traits; upcasting `dyn Sub` to `dyn Super`; writing extension traits; using GATs.
 
 ## Associated Types vs Generic Parameters
 
@@ -26,7 +26,7 @@ trait From<T> {
 
 ## Generic Associated Types (GATs)
 
-Since Rust 1.65. Enables **lending iterators** that return references tied to the borrow of `&self`.
+Enables **lending iterators** that return references tied to the borrow of `&self`.
 
 ```rust
 trait LendingIterator {
@@ -47,6 +47,17 @@ trait Error: fmt::Display + fmt::Debug {
 ```
 
 Build hierarchies like `Entity: Identifiable + Timestamped` to compose required capabilities.
+
+**Trait upcasting (1.86+)**: `&dyn Sub` coerces to `&dyn Super` when `trait Sub: Super`. Same for `&mut`, `Box`, `Rc`, `Arc`. The old `as_any` / `Deref`-to-supertrait hacks are unnecessary.
+
+```rust
+trait Store: std::any::Any {
+    fn name(&self) -> &str;
+}
+fn downcast(s: &dyn Store) -> Option<&Postgres> {
+    s.downcast_ref() // Any methods are available on dyn Store
+}
+```
 
 ## Blanket Implementations
 
@@ -81,33 +92,58 @@ Standard library markers: `Send`, `Sync`, `Unpin`, `Sized`, `Copy`.
 
 Connects to **type-state pattern** (see [newtype-typestate.md](./newtype-typestate.md)).
 
-## Trait Object Safety Rules
+## Dyn Compatibility (formerly Object Safety)
 
-A trait is **object-safe** (usable as `dyn Trait`) only if:
+A trait is **dyn-compatible** (usable as `dyn Trait`) only if it can have a vtable. The compiler error is still `E0038`; older docs say "object-safe."
 
-1. No `Self: Sized` bound on the trait
-2. No generic type parameters on methods
-3. No `Self` in return position (except via indirection like `Box<Self>`)
-4. No associated functions (methods must have `&self`/`&mut self`/`self`)
+1. `Sized` is not a supertrait (`trait Foo: Sized` is fatal)
+2. No generic *type* parameters on dispatchable methods (generic *lifetimes* are OK)
+3. No `Self` except as the receiver — not in args (`&Self`), not in returns (`-> Self`). **`Box<Self>` does not help** (it still names `Self`). Return `Box<dyn Trait>` instead
+4. Dispatchable receivers: `&self`, `&mut self`, `self: Box<Self>` / `Rc<Self>` / `Arc<Self>` / `Pin<P>`. Bare `self` by value is *not* dispatchable (implicit `where Self: Sized`) — the trait can still be `dyn`, but that method cannot be called on it
+5. Associated functions without a receiver must opt out: `fn create() -> Self where Self: Sized`
+6. All supertraits must themselves be dyn-compatible
+7. No associated constants; no GATs. Plain associated types are OK but must be specified at the use site: `dyn Iterator<Item = u32>`, never a bare `dyn Iterator`
+8. No `async fn` or `-> impl Trait` on dispatchable methods (opaque types). Workaround: `Pin<Box<dyn Future<Output = T> + '_>>` or `Box<dyn Iterator<Item = U> + '_>`
 
 ```rust
-// ✅ Object-safe
+// ✅ Dyn compatible
 trait Drawable {
     fn draw(&self);
 }
 
-// ❌ NOT object-safe (Self in return)
+// ❌ Self in return
 trait Cloneable {
     fn clone_self(&self) -> Self;
 }
 
-// ❌ NOT object-safe (generic method)
+// ❌ Self in argument — why PartialEq isn't dyn compatible
+trait Comparable {
+    fn equals(&self, other: &Self) -> bool;
+}
+
+// ❌ Box<Self> still names Self
+trait Spawner {
+    fn spawn(&self) -> Box<Self>;
+}
+
+// ✅ Clone through a trait object
+trait CloneableDyn {
+    fn clone_box(&self) -> Box<dyn CloneableDyn>;
+}
+
+// ❌ Generic method (vtable can't hold infinite monomorphizations)
 trait Converter {
     fn convert<T>(&self) -> T;
 }
+
+// ✅ Associated function opted out of the vtable
+trait Factory {
+    fn describe(&self) -> String;
+    fn create() -> Self where Self: Sized;
+}
 ```
 
-**Workaround**: Add `where Self: Sized` to exclude a method from the vtable.
+**Workaround**: add `where Self: Sized` to exclude a method from the vtable.
 
 **Rule**: If you plan to use `dyn Trait`, keep methods simple. When in doubt, try `let _: Box<dyn YourTrait>;` and let the compiler tell you.
 
@@ -155,7 +191,9 @@ fn evens(limit: i32) -> impl Iterator<Item = i32> {
 | APIT `fn(x: impl T)` | Caller | `fn<X: T>(x: X)` |
 | RPIT `fn() -> impl T` | Callee | Existential type |
 
-**Since Rust 1.75**: RPIT in trait definitions (`fn items(&self) -> impl Iterator<Item = &str>`). Removes the need for `Box<dyn Iterator>` in trait return positions.
+**RPITIT / `async fn` in traits (1.75+)**: `fn items(&self) -> impl Iterator<Item = &str>` and `async fn fetch(&self)` are native. **Not dyn-compatible.** Need `dyn Container`? Keep `Box<dyn Iterator<Item = &str> + '_>` or `Pin<Box<dyn Future<...> + Send + '_>>` (or split the trait). See [async.md](./async.md) for `Send` bounds on public async traits (`trait-variant`).
+
+**Precise capturing (`use<>`, 1.82; default in edition 2024)**: RPIT captures all in-scope lifetimes in 2024. To *not* capture one, write `-> impl Trait + use<T>` (capture only `T`). The old `Captures<'a>` trick is obsolete.
 
 ## `impl Trait` vs `dyn Trait` Decision
 
@@ -250,7 +288,7 @@ impl Sensor for AnySensor {
 | Heap allocation | Usually (`Box`) | None (inline) |
 | Open to new types | ✅ | ❌ (closed set) |
 | Code size | Shared | One copy per variant |
-| Trait must be object-safe | Yes | No |
+| Trait must be dyn-compatible | Yes | No |
 
 **When**: closed set, hot path, < ~20 variants (manual enum). For 10+ variants with many methods, use the `enum_dispatch` crate to automate.
 
@@ -307,7 +345,7 @@ Replaces `Vec<u8>` swampland with types like `Celsius`, `Rpm`, `Volts` that cann
 
 ## Anti-Patterns
 
-- **Returning `Self` from a trait you want to use as `dyn`.** Add `where Self: Sized` to those methods, or restructure.
+- **Returning `Self` (or `Box<Self>`, or taking `&Self`) from a trait you want as `dyn`.** `Box<Self>` does not help. Return `Box<dyn Trait>`, or add `where Self: Sized` to opt the method out of the vtable.
 - **Blanket impls that conflict with future specific impls.** Orphan rules + coherence make this irreversible.
 - **`dyn Trait` for performance-critical hot paths.** Use generics or enum dispatch.
 - **Trait with too many responsibilities.** Split into focused traits (ISP). Use supertraits to require combinations.
